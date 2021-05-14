@@ -631,8 +631,11 @@ namespace SharpPulsar
 				var uuid = totalChunks > 1 ? string.Format("{0}-{1:D}", _producerName, sequenceId) : null;
 				for (var chunkId = 0; chunkId < totalChunks; chunkId++)
 				{
-					SerializeAndSendMessage(msg, msgMetadata, sequenceId, uuid, chunkId, totalChunks, readStartIndex, maxMessageSize, payload, payload.Length, uncompressedSize);
+                    var pl = _pool.Rent(payload.Length);
+                    Array.Copy(payload, pl, payload.Length);
+					SerializeAndSendMessage(msg, msgMetadata, sequenceId, uuid, chunkId, totalChunks, readStartIndex, maxMessageSize, pl, pl.Length, uncompressedSize);
 					readStartIndex = ((chunkId + 1) * maxMessageSize);
+                    _pool.Return(pl);
 				}
 			}
 			catch (PulsarClientException e)
