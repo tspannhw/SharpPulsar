@@ -7,7 +7,6 @@ using Akka.Event;
 using ProtoBuf;
 using SharpPulsar.Common;
 using SharpPulsar.Exceptions;
-using SharpPulsar.Extension;
 using SharpPulsar.Protocol;
 using SharpPulsar.Protocol.Proto;
 
@@ -47,12 +46,12 @@ namespace SharpPulsar.Batch
 		// sequence id for this batch which will be persisted as a single entry by broker
 		private long _lowestSequenceId = -1L;
 		private long _highestSequenceId = -1L;
-		private List<byte> _batchedMessageMetadataAndPayload;
 		private IList<Message<T>> _messages = new List<Message<T>>();
 		private Action<object, Exception> _previousCallback = null;
 		// keep track of callbacks for individual messages being published in a batch
 		private Action<object, Exception> _firstCallback;
         private ILoggingAdapter _log;
+        private readonly ArrayPool<byte> _pool = ArrayPool<byte>.Shared;
 
         public BatchMessageContainer(ActorSystem system)
         {
@@ -73,7 +72,6 @@ namespace SharpPulsar.Batch
 				_messageMetadata.SequenceId = (ulong)msg.SequenceId;
 				_lowestSequenceId = Commands.InitBatchMessageMetadata(_messageMetadata);
 				_firstCallback = callback;
-				_batchedMessageMetadataAndPayload = new List<byte>(Math.Min(MaxBatchSize, Container.MaxMessageSize));
 				if(msg.Metadata.ShouldSerializeTxnidMostBits() && CurrentTxnidMostBits == -1)
 				{
 					CurrentTxnidMostBits = (long)msg.Metadata.TxnidMostBits;
@@ -120,10 +118,10 @@ namespace SharpPulsar.Batch
 						throw ex;
 					}
 				}
-				var batchedMessageMetadataAndPayload = stream.ToArray();
-
+				var batchedMessageMetadataAndPayload = _pool.Rent((int)stream.Length);
+                Array.Copy(stream.ToArray(), batchedMessageMetadataAndPayload, stream.Length);
 				var uncompressedSize = batchedMessageMetadataAndPayload.Length;
-				var compressedPayload = Compressor.Encode(batchedMessageMetadataAndPayload);
+				var compressedPayload = Compressor.Encode(batchedMessageMetadataAndPayload, _pool);
 				if (CompressionType != CompressionType.None)
 				{
 					_messageMetadata.Compression = CompressionType;
@@ -132,7 +130,8 @@ namespace SharpPulsar.Batch
     
 				// Update the current max batch Size using the uncompressed Size, which is what we need in any case to
 				// accumulate the batch content
-				MaxBatchSize = (int)Math.Max(MaxBatchSize, uncompressedSize);
+				MaxBatchSize = Math.Max(MaxBatchSize, uncompressedSize);
+                _pool.Return(compressedPayload);
 				return compressedPayload;
 			}
 		}
@@ -147,7 +146,6 @@ namespace SharpPulsar.Batch
 			CurrentBatchSize = 0;
 			_lowestSequenceId = -1L;
 			_highestSequenceId = -1L;
-			_batchedMessageMetadataAndPayload = null;
 			CurrentTxnidMostBits = -1L;
 			CurrentTxnidLeastBits = -1L;
 		}

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Buffers;
 using System.IO;
 using ICSharpCode.SharpZipLib.Zip.Compression.Streams;
 
@@ -29,7 +30,7 @@ namespace SharpPulsar.Common.Compression
     /// </summary>
     public class CompressionCodecZLib : CompressionCodec
 	{
-        public byte[] Encode(byte[] raw)
+        public byte[] Encode(byte[] raw, ArrayPool<byte> pool)
         {
             //ComponentAce.Compression.Libs.zlib
             throw new NotImplementedException();

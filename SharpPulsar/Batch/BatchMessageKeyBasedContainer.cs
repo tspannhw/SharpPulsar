@@ -220,9 +220,10 @@ namespace SharpPulsar.Batch
 			internal int MaxBatchSize;
 			internal string TopicName;
 			internal string ProducerName;
+            private readonly ArrayPool<byte> _pool = ArrayPool<byte>.Shared;
 
-			// keep track of callbacks for individual messages being published in a batch
-			internal Action<object, Exception> FirstCallback;
+            // keep track of callbacks for individual messages being published in a batch
+            internal Action<object, Exception> FirstCallback;
 
 			public virtual byte[] CompressedBatchMetadataAndPayload
 			{
@@ -236,9 +237,9 @@ namespace SharpPulsar.Batch
 						Serializer.SerializeWithLengthPrefix(stream, Commands.SingleMessageMetadat(msgMetadata, (int)msg.Data.Length, msg.SequenceId), PrefixStyle.Fixed32BigEndian);
 						messageWriter.Write(msg.Data.ToArray());
 					}
-					var batchedMessageMetadataAndPayload = stream.ToArray();
+					var batchedMessageMetadataAndPayload = _pool.Rent((int)stream.Length);
 					var uncompressedSize = batchedMessageMetadataAndPayload.Length;
-					var compressedPayload = Compressor.Encode(batchedMessageMetadataAndPayload);
+					var compressedPayload = Compressor.Encode(batchedMessageMetadataAndPayload, _pool);
 					BatchedMessageMetadataAndPayload = null;
 					if (CompressionType != CompressionType.None)
 					{
@@ -249,6 +250,7 @@ namespace SharpPulsar.Batch
 					// Update the current max batch Size using the uncompressed Size, which is what we need in any case to
 					// accumulate the batch content
 					MaxBatchSize = Math.Max(MaxBatchSize, uncompressedSize);
+                    _pool.Return(compressedPayload);
 					return compressedPayload;
 				}
 			}

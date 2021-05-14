@@ -20,6 +20,8 @@
 /// </summary>
 /// 
 
+using System;
+using System.Buffers;
 using System.Linq;
 using K4os.Compression.LZ4;
 
@@ -36,16 +38,18 @@ namespace SharpPulsar.Common.Compression
 		{
 			
 		}
-		
-		public byte[] Encode(byte[] source)
-		{
+
+        public byte[] Encode(byte[] source, ArrayPool<byte> pool)
+        {
 			var maxLength = LZ4Codec.MaximumOutputSize(source.Length);
 
             var target = new byte[maxLength];
 
 			var count = LZ4Codec.Encode(source, 0, source.Length, target, 0, target.Length);
-			
-			return target.Take(count).ToArray();
+            var rented = pool.Rent(target.Length);
+            Array.Copy(target.Take(count).ToArray(), rented, target.Length);
+            pool.Return(source);
+            return rented;
 		}
 
 		public byte[] Decode(byte[] encoded, int uncompressedLength)

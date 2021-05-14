@@ -17,6 +17,8 @@
 /// under the License.
 /// </summary>
 
+using System;
+using System.Buffers;
 using ZstdNet;
 
 namespace SharpPulsar.Common.Compression
@@ -26,11 +28,15 @@ namespace SharpPulsar.Common.Compression
     /// </summary>
     public class CompressionCodecZstd : CompressionCodec
 	{
-		public byte[] Encode(byte[] source)
+		public byte[] Encode(byte[] source, ArrayPool<byte> pool)
 		{
             using var compressor = new Compressor();
-            return compressor.Wrap(source);
-		}
+            var compressed = compressor.Wrap(source);
+            var rented = pool.Rent(compressed.Length);
+            Array.Copy(compressed, rented, compressed.Length);
+            pool.Return(source);
+            return rented;
+        }
 
 		public byte[] Decode(byte[] encoded, int uncompressedLength)
 		{

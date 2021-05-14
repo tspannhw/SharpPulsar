@@ -18,6 +18,7 @@
 /// under the License.
 /// </summary>
 
+using System.Buffers;
 using System.IO;
 
 namespace SharpPulsar.Common.Compression
@@ -34,7 +35,7 @@ namespace SharpPulsar.Common.Compression
 		/// <param name="raw">
 		///            a buffer with the uncompressed content. The reader/writer indexes will not be modified </param>
 		/// <returns> a new buffer with the compressed content. The buffer needs to be released by the receiver </returns>
-		byte[] Encode(byte[] raw);
+		byte[] Encode(byte[] raw, ArrayPool<byte> pool);
 
 		/// <summary>
 		/// Decompress a buffer.

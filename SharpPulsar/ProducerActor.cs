@@ -115,6 +115,7 @@ namespace SharpPulsar
 		private long _requestId = -1;
 		private long _maxMessageSize;
 		private IActorRef _cnx;
+        private readonly ArrayPool<byte> _pool = ArrayPool<byte>.Shared;
 
         public ProducerActor(long producerid, IActorRef client, IActorRef lookup, IActorRef cnxPool, IActorRef idGenerator, string topic, ProducerConfigurationData conf, int partitionIndex, ISchema<T> schema, ProducerInterceptors<T> interceptors, ClientConfigurationData clientConfiguration, ProducerQueueCollection<T> queue) : base(client, lookup, cnxPool, topic, conf, schema, interceptors, clientConfiguration, queue)
 		{
@@ -572,19 +573,17 @@ namespace SharpPulsar
 
 			var msg = (Message<T>) message;
 			var msgMetadata = msg.Metadata;
-
-            var payload = msg.Data.ToArray();
-
+            var payload = _pool.Rent((int)msg.Data.Length);
             try
-			{
+            {                
+                CopyArray(msg.Data, payload);
                 // If compression is enabled, we are compressing, otherwise it will simply use the same buffer
                 var uncompressedSize = payload.Length;
-                var compressedPayload = payload;
                 // Batch will be compressed when closed
                 // If a message has a delayed delivery time, we'll always send it individually
                 if (!BatchMessagingEnabled || msgMetadata.ShouldSerializeDeliverAtTime())
                 {
-                    compressedPayload = _compressor.Encode(payload);
+                    var compressedPayload = _compressor.Encode(payload, _pool);
 
                     // validate msg-size (For batching this will be check at the batch completion size)
                     var compressedSize = compressedPayload.Length;
@@ -594,24 +593,28 @@ namespace SharpPulsar
                         var compressedStr = (!BatchMessagingEnabled && Conf.CompressionType != CompressionType.None) ? "Compressed" : "";
                         var invalidMessageException = new PulsarClientException.InvalidMessageException($"The producer {_producerName} of the topic {Topic} sends a {compressedStr} message with {compressedSize:d} bytes that exceeds {maxMessageSize:d} bytes");
                         _log.Error(invalidMessageException.ToString());
+                        _pool.Return(compressedPayload);
                         return;
                     }
+                    payload = compressedPayload;
                 }
 
                 if (!msg.Replicated && !string.IsNullOrWhiteSpace(msgMetadata.ProducerName))
                 {
                     var invalidMessageException = new PulsarClientException.InvalidMessageException($"The producer {_producerName} of the topic {Topic} can not reuse the same message {msgMetadata.SequenceId}");
                     _log.Error(invalidMessageException.ToString());
+                    _pool.Return(payload);
                     return;
                 }
 
                 if (!PopulateMessageSchema(msg, out _))
                 {
+                    _pool.Return(payload);
                     return;
                 }
 
                 // send in chunks
-                var totalChunks = CanAddToBatch(msg) ? 1 : Math.Max(1, compressedPayload.Length) / maxMessageSize + (Math.Max(1, compressedPayload.Length) % maxMessageSize == 0 ? 0 : 1);
+                var totalChunks = CanAddToBatch(msg) ? 1 : Math.Max(1, payload.Length) / maxMessageSize + (Math.Max(1, payload.Length) % maxMessageSize == 0 ? 0 : 1);
                 // chunked message also sent individually so, try to acquire send-permits
                 for (var i = 0; i < (totalChunks - 1); i++)
                 {
@@ -628,7 +631,7 @@ namespace SharpPulsar
 				var uuid = totalChunks > 1 ? string.Format("{0}-{1:D}", _producerName, sequenceId) : null;
 				for (var chunkId = 0; chunkId < totalChunks; chunkId++)
 				{
-					SerializeAndSendMessage(msg, msgMetadata, sequenceId, uuid, chunkId, totalChunks, readStartIndex, maxMessageSize, compressedPayload, compressedPayload.Length, uncompressedSize);
+					SerializeAndSendMessage(msg, msgMetadata, sequenceId, uuid, chunkId, totalChunks, readStartIndex, maxMessageSize, payload, payload.Length, uncompressedSize);
 					readStartIndex = ((chunkId + 1) * maxMessageSize);
 				}
 			}
@@ -641,6 +644,10 @@ namespace SharpPulsar
 			{
 				SendComplete(msg, DateTimeHelper.CurrentUnixTimeMillis(), -1, -1, -1, t);
 			}
+            finally
+            {
+                _pool.Return(payload);
+            }
 		}
 
 		private bool CanEnqueueRequest(long sequenceId)
@@ -1456,6 +1463,10 @@ namespace SharpPulsar
 				return true;
 			return false;
 		}
+        private void CopyArray(ReadOnlySequence<byte> data, byte[] array)
+        {
+            Array.Copy(data.ToArray(), array, data.Length);
+        }
 		private bool HasEventTime(ulong seq)
 		{
 			if (seq > 0)

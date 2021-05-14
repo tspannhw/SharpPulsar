@@ -20,6 +20,8 @@
 
 namespace SharpPulsar.Common.Compression
 {
+    using System;
+    using System.Buffers;
     using Snappy;
 
     //using PooledByteBufAllocator = io.netty.buffer.PooledByteBufAllocator;
@@ -29,9 +31,13 @@ namespace SharpPulsar.Common.Compression
     /// </summary>
     public class CompressionCodecSnappy : CompressionCodec
 	{
-		public byte[] Encode(byte[] source)
+        public byte[] Encode(byte[] source, ArrayPool<byte> pool)
         {
-            return SnappyCodec.Compress(source);
+            var compressed = SnappyCodec.Compress(source);
+            var rented = pool.Rent(compressed.Length);
+            Array.Copy(compressed, rented, compressed.Length);
+            pool.Return(source);
+            return rented;
         }
 
 		public byte[] Decode(byte[] encoded, int uncompressedLength)
